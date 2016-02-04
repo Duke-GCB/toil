@@ -31,7 +31,7 @@ from toil.common import Config
 from toil.jobStores.abstractJobStore import (AbstractJobStore, NoSuchJobException,
                                              NoSuchFileException)
 from toil.jobStores.fileJobStore import FileJobStore
-from toil.test import ToilTest, needs_aws, needs_azure, needs_encryption
+from toil.test import ToilTest, needs_aws, needs_azure, needs_encryption, needs_google
 
 logger = logging.getLogger(__name__)
 
@@ -528,6 +528,12 @@ class hidden:
 class FileJobStoreTest(hidden.AbstractJobStoreTest):
     def _createJobStore(self, config=None):
         return FileJobStore(self.namePrefix, config=config)
+
+@needs_google
+class GoogleJobStoreTest(hidden.AbstractJobStoreTest):
+
+    def _createJobStore(self, config=None):
+        from toil.jobStores.googleJobStore import GoogleJobStore
 
 
 @needs_aws

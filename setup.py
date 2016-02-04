@@ -38,6 +38,9 @@ kwargs = dict(
             'azure==0.11.1'],
         'encryption': [
             'pynacl==0.3.0'],
+        'google': [
+            'gcs_oauth2_boto_plugin==1.9',
+            'boto=2.38.0'],
         'cwl': [
             'cwltool==1.0.20151211141743']},
     package_dir={'': 'src'},

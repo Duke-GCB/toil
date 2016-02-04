@@ -146,6 +146,29 @@ def needs_aws(test_item):
         else:
             return unittest.skip("Skipping test. Create ~/.boto to include this test.")(test_item)
 
+def needs_google(test_item):
+    """
+    Use as a decorator before test classes or methods to only run them if AWS usable.
+    """
+    test_item = _mark_test('google', test_item)
+    try:
+        # noinspection PyUnresolvedReferences
+        import gcs_oauth2_boto_plugin
+    except ImportError:
+        return unittest.skip("Skipping test. Install toil with the 'google' extra to include this "
+                             "test.")(test_item)
+    except:
+        raise
+    else:
+        dot_boto_path = os.path.expanduser('~/.boto')
+        hv_uuid_path = '/sys/hypervisor/uuid'
+        if os.path.exists(dot_boto_path) \
+                or os.path.exists(hv_uuid_path) \
+                        and open(hv_uuid_path).read().startswith('ec2'):
+            return test_item
+        else:
+            return unittest.skip("Skipping test. Create ~/.boto to include this test.")(test_item)
+
 
 def needs_azure(test_item):
     """

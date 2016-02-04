@@ -1,0 +1,173 @@
+import os
+import uuid
+from StringIO import StringIO
+from bd2k.util.threading import ExceptionalThread
+import boto
+import logging
+import cPickle
+import gcs_oauth2_boto_plugin
+from toil.jobStores.abstractJobStore import AbstractJobStore
+from toil.jobWrapper import JobWrapper
+
+log = logging.getLogger(__name__)
+
+GOOGLE_STORAGE = 'gs'
+
+class GoogleJobStore(AbstractJobStore):
+    def __init__(self, namePrefix, project_id, config=None):
+        #  create 2 buckets
+        self.project_id = project_id #part of jobstorestring= gs:project_id:bucket
+        self.name = None #namePrefix
+        self.header_values = {"x-goog-project-id": project_id}
+        self.uri = boto.storage_uri(self.name, GOOGLE_STORAGE)
+        self.files = self._call_with_headers(self.uri.create_bucket)
+        super(GoogleJobStore, self).__init__(config=config)
+
+    def _call_with_headers(self,fn):
+        # many fns need google headers. use this fn to handle that for you
+        return fn(headers=self.header_values)
+
+    def _newID(self, jobStoreID=None):
+        if jobStoreID:
+            return str(uuid.uuid5(jobStoreID))
+        else:
+            return str(uuid.uuid4())
+
+    def _fileURI(self,jobStoreId):
+        # generate uri given file
+        return boto.storage_uri(self.name+'/'+jobStoreId, GOOGLE_STORAGE)
+
+    def _writeFile(self, jobStoreID, fileObj, update=False):
+        key = None
+        fileURI = self._fileURI(jobStoreID)
+        if update:
+            key = fileURI.get_key()
+        else:
+            key = fileURI.new_key()
+        key.set_contents_from_file(fileObj)
+
+    def _writeString(self, jobStoreID, stringToUpload, update=False):
+        self._writeFile(jobStoreID,StringIO(stringToUpload))
+
+    def _readContents(self, jobStoreID):
+        fileURI = self._fileURI(jobStoreID)
+        return fileURI.get_contents_as_string()  # TODO: Determine if we need headers here
+
+    def deleteJobStore(self):
+        while True:
+            for obj in self._call_with_headers(self.uri.get_bucket):  # what if bucket doesn't exist?
+                obj.delete()
+            try:
+                self.uri.delete_bucket()
+            except:  # TODO: make exception more specific
+                # keep trying- we could have failed because of eventual consistency in 2 places
+                # 1) missing objects in bucket that are meant to be deleted
+                # 2) listing of ghost objects when trying to delete bucket itself
+                pass
+            else:
+                return  # break loop
+
+    def create(self, command, memory, cores, disk, predecessorNumber=0):
+        jobStoreID = self._newID()
+        job = GoogleJob(jobStoreID=jobStoreID,
+                        command=command, memory=memory, cores=cores, disk=disk,
+                        remainingRetryCount=self._defaultTryCount(), logJobStoreFileID=None,
+                        predecessorNumber=predecessorNumber)
+        # TODO: Determind if new_key require our headers.
+        self._writeString(jobStoreID, cPickle.dumps(job))
+
+    def exists(self, jobStoreID):
+        return self._fileURI(jobStoreID).exists()
+
+    def getPublicUrl(self, fileName):
+        return "storage.googleapis.com/{}/{}".format(self.name,fileName)
+
+    def getSharedPublicUrl(self, sharedFileName):
+        pass
+
+    def load(self, jobStoreID):
+        return cPickle.loads(self._readContents(jobStoreID))
+
+    def update(self, job):
+        self._writeString(job.jobStoreID, cPickle.dumps(job), update=True)
+
+    def delete(self, jobStoreID):
+        self._get_key(jobStoreID).delete()
+
+    def _get_key(self, jobStoreID):
+        return self._fileURI(jobStoreID).get_key()
+
+    def jobs(self):
+        pass
+
+    def writeFile(self, localFilePath, jobStoreID=None):  # TODO: Fix this to handle jobStore None
+        self._writeFile(open(localFilePath), jobStoreID)
+
+    def writeFileStream(self, jobStoreID=None):
+        readable_fh, writable_fh = os.pipe()
+        key = self._new_key(jobStoreID)
+        with os.fdopen(readable_fh, 'r') as readable:
+            with os.fdopen(writable_fh, 'w') as writable:
+                key.set_contents_from_stream(readable)
+                yield writable
+
+    def _new_key(self, jobStoreID):
+        return self._fileURI(jobStoreID).new_key()
+
+    def getEmptyFileStoreID(self, jobStoreID=None):
+        return self._newID(jobStoreID)
+
+    def readFile(self, jobStoreFileID, localFilePath):  # TODO: download to file directly
+        with open(localFilePath, mode="w") as f:
+            f.write(self._readContents(jobStoreFileID))
+
+    def readFileStream(self, jobStoreFileID):
+        readable_fh, writable_fh = os.pipe()
+        with os.fdopen(readable_fh, 'r') as readable:
+            with os.fdopen(writable_fh, 'w') as writable:
+                def writer():
+                    try:
+                        self._get_key(jobStoreFileID).get_file(writable)
+                    finally:
+                        # This close() will send EOF to the reading end and ultimately cause
+                        # the yield to return. It also makes the implict .close() done by the
+                        #  enclosing "with" context redundant but that should be ok since
+                        # .close() on file objects are idempotent.
+                        writable.close()
+
+                thread = ExceptionalThread(target=writer)
+                thread.start()
+                yield readable
+                thread.join()
+
+    def deleteFile(self, jobStoreFileID):
+        self._get_key(jobStoreFileID).delete()
+
+    def fileExists(self, jobStoreFileID):
+        try:
+            self._get_key(jobStoreFileID)
+            return True
+        except:
+            return False
+
+    def updateFile(self, jobStoreFileID, localFilePath):
+        pass
+
+    def updateFileStream(self, jobStoreFileID):
+        pass
+
+    def writeSharedFileStream(self, sharedFileName, isProtected=None):
+        pass
+
+    def readSharedFileStream(self, sharedFileName):
+        pass
+
+    def writeStatsAndLogging(self, statsAndLoggingString):
+        pass
+
+    def readStatsAndLogging(self, callback, readAll=False):
+        pass
+
+
+class GoogleJob(JobWrapper):
+    pass
