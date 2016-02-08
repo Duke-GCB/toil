@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import os
 import uuid
 from StringIO import StringIO
@@ -14,22 +15,38 @@ log = logging.getLogger(__name__)
 GOOGLE_STORAGE = 'gs'
 
 class GoogleJobStore(AbstractJobStore):
-    def __init__(self, namePrefix, project_id, config=None):
+    sharedFileOwnerID = str(uuid.UUID('891f7db6-e4d9-4221-a58e-ab6cc4395f94'))
+
+    @classmethod
+    def createJobStore(cls, jobStoreString, config=None):
+        try:
+            namePrefix, projectID = jobStoreString.split(":",1)
+        except(ValueError):
+            # we don't have a specified projectID
+            namePrefix=jobStoreString
+            projectID=None
+        return cls(namePrefix, projectID, config)
+
+    def __init__(self, namePrefix, projectID=None, config=None):
         #  create 2 buckets
-        self.project_id = project_id #part of jobstorestring= gs:project_id:bucket
-        self.name = None #namePrefix
-        self.header_values = {"x-goog-project-id": project_id}
+        self.projectID = projectID #part of jobstorestring= gs:project_id:bucket
+        self.name = "gs://"+namePrefix
+        self.headerValues = {"x-goog-project-id": projectID} if projectID else None
         self.uri = boto.storage_uri(self.name, GOOGLE_STORAGE)
         self.files = self._call_with_headers(self.uri.create_bucket)
         super(GoogleJobStore, self).__init__(config=config)
 
     def _call_with_headers(self,fn):
         # many fns need google headers. use this fn to handle that for you
-        return fn(headers=self.header_values)
+        return fn(headers=self.headerValues) if self.headerValues else fn()
+        #return fn()
 
-    def _newID(self, jobStoreID=None):
+    def _newID(self, jobStoreID=None, ownerID=None, name=None):
         if jobStoreID:
             return str(uuid.uuid5(jobStoreID))
+        elif ownerID:
+            assert name is not None
+            return uuid.uuid5(ownerID, name)
         else:
             return str(uuid.uuid4())
 
@@ -56,14 +73,14 @@ class GoogleJobStore(AbstractJobStore):
     def deleteJobStore(self):
         while True:
             for obj in self._call_with_headers(self.uri.get_bucket):  # what if bucket doesn't exist?
-                obj.delete()
+                obj.delete() # try except here too
             try:
                 self.uri.delete_bucket()
             except:  # TODO: make exception more specific
                 # keep trying- we could have failed because of eventual consistency in 2 places
                 # 1) missing objects in bucket that are meant to be deleted
                 # 2) listing of ghost objects when trying to delete bucket itself
-                pass
+                raise
             else:
                 return  # break loop
 
@@ -83,7 +100,8 @@ class GoogleJobStore(AbstractJobStore):
         return "storage.googleapis.com/{}/{}".format(self.name,fileName)
 
     def getSharedPublicUrl(self, sharedFileName):
-        pass
+        return self.getPublicUrl(self._newID(ownerID=self.sharedFileOwnerID,
+                                             name=sharedFileName))
 
     def load(self, jobStoreID):
         return cPickle.loads(self._readContents(jobStoreID))
@@ -103,6 +121,7 @@ class GoogleJobStore(AbstractJobStore):
     def writeFile(self, localFilePath, jobStoreID=None):  # TODO: Fix this to handle jobStore None
         self._writeFile(open(localFilePath), jobStoreID)
 
+    @contextmanager
     def writeFileStream(self, jobStoreID=None):
         readable_fh, writable_fh = os.pipe()
         key = self._new_key(jobStoreID)
@@ -121,6 +140,7 @@ class GoogleJobStore(AbstractJobStore):
         with open(localFilePath, mode="w") as f:
             f.write(self._readContents(jobStoreFileID))
 
+    @contextmanager
     def readFileStream(self, jobStoreFileID):
         readable_fh, writable_fh = os.pipe()
         with os.fdopen(readable_fh, 'r') as readable:
@@ -151,16 +171,32 @@ class GoogleJobStore(AbstractJobStore):
             return False
 
     def updateFile(self, jobStoreFileID, localFilePath):
-        pass
+        with open(localFilePath) as f:
+            self._writeFile(jobStoreFileID, f, update=True)
 
+    @contextmanager
     def updateFileStream(self, jobStoreFileID):
-        pass
+        readable_fh, writable_fh = os.pipe()
+        key = self._get_key(jobStoreFileID)
+        with os.fdopen(readable_fh, 'r') as readable:
+            with os.fdopen(writable_fh, 'w') as writable:
+                key.set_contents_from_stream(readable)
+                yield writable
 
+    @contextmanager
     def writeSharedFileStream(self, sharedFileName, isProtected=None):
-        pass
+        jobStoreFileID = self._newID()
+        readable_fh, writable_fh = os.pipe()
+        key = self._new_key(jobStoreFileID)
+        with os.fdopen(readable_fh, 'r') as readable:
+            with os.fdopen(writable_fh, 'w') as writable:
+                key.set_contents_from_stream(readable)
+                yield writable
 
+    @contextmanager
     def readSharedFileStream(self, sharedFileName):
-        pass
+        jobStoreFileID = self._newID(ownerID=self.sharedFileOwnerID,name=sharedFileName)
+        self.readFileStream(jobStoreFileID)
 
     def writeStatsAndLogging(self, statsAndLoggingString):
         pass

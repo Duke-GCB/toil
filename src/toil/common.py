@@ -424,6 +424,11 @@ def loadJobStore( jobStoreString, config=None ):
         from toil.jobStores.azureJobStore import AzureJobStore
         account, namePrefix = jobStoreArgs.split( ':', 1 )
         return AzureJobStore( account, namePrefix, config=config )
+    elif jobStoreName == 'google':
+        from toil.jobStores.googleJobStore import GoogleJobStore
+        projectID, namePrefix = jobStoreArgs.split(':', 1)
+        return GoogleJobStore(namePrefix, projectID, config=config)
+
     else:
         raise RuntimeError( "Unknown job store implementation '%s'" % jobStoreName )
 

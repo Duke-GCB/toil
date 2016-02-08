@@ -534,6 +534,7 @@ class GoogleJobStoreTest(hidden.AbstractJobStoreTest):
 
     def _createJobStore(self, config=None):
         from toil.jobStores.googleJobStore import GoogleJobStore
+        return GoogleJobStore.createJobStore(self.namePrefix+":"+"ucsc-bd2k", config=config)
 
 
 @needs_aws
