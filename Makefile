@@ -69,7 +69,7 @@ clean_sdist:
 
 
 test: check_venv
-	$(python) setup.py test --pytest-args "-vv $(tests)"
+	$(python) setup.py test --pytest-args "-vvs $(tests)"
 
 
 pypi: check_venv check_clean_working_copy check_running_on_jenkins
