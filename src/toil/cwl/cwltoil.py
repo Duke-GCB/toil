@@ -213,8 +213,8 @@ class CWLJob(Job):
                                                   os.getcwd(), None,
                                                   outdir=outdir,
                                                   tmpdir=tmpdir,
-                                                  use_container=True,
-                                                  preserve_environment=['PATH'])
+                                                  use_container=False, # TODO: honor --no-container
+                                                  preserve_environment=['PATH']) # TODO: honor --preserve-environment
 
         # Copy output files into the global file store.
         adjustFiles(output, functools.partial(writeFile, fileStore.writeGlobalFile, {}))
